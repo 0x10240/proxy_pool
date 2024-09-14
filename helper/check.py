@@ -70,6 +70,13 @@ class DoValidator(object):
         return True
 
     @classmethod
+    def socksValidator(cls, proxy):
+        for func in ProxyValidator.socks_validator:
+            if not func(proxy.proxy):
+                return False
+        return True
+
+    @classmethod
     def preValidator(cls, proxy):
         for func in ProxyValidator.pre_validator:
             if not func(proxy):
@@ -115,26 +122,26 @@ class _ThreadChecker(Thread):
     def __ifRaw(self, proxy):
         if proxy.last_status:
             if self.proxy_handler.exists(proxy):
-                self.log.info('RawProxyCheck - {}: {} exist'.format(self.name, proxy.proxy.ljust(23)))
+                self.log.info('RawProxyCheck - {}: {} exist'.format(self.name, proxy.proxy.ljust(30)))
             else:
-                self.log.info('RawProxyCheck - {}: {} pass'.format(self.name, proxy.proxy.ljust(23)))
+                self.log.info('RawProxyCheck - {}: {} pass'.format(self.name, proxy.proxy.ljust(30)))
                 self.proxy_handler.put(proxy)
         else:
-            self.log.info('RawProxyCheck - {}: {} fail'.format(self.name, proxy.proxy.ljust(23)))
+            self.log.info('RawProxyCheck - {}: {} fail'.format(self.name, proxy.proxy.ljust(30)))
 
     def __ifUse(self, proxy):
         if proxy.last_status:
-            self.log.info('UseProxyCheck - {}: {} pass'.format(self.name, proxy.proxy.ljust(23)))
+            self.log.info('UseProxyCheck - {}: {} pass'.format(self.name, proxy.proxy.ljust(30)))
             self.proxy_handler.put(proxy)
         else:
             if proxy.fail_count > self.conf.maxFailCount:
                 self.log.info('UseProxyCheck - {}: {} fail, count {} delete'.format(self.name,
-                                                                                    proxy.proxy.ljust(23),
+                                                                                    proxy.proxy.ljust(30),
                                                                                     proxy.fail_count))
                 self.proxy_handler.delete(proxy)
             else:
                 self.log.info('UseProxyCheck - {}: {} fail, count {} keep'.format(self.name,
-                                                                                  proxy.proxy.ljust(23),
+                                                                                  proxy.proxy.ljust(30),
                                                                                   proxy.fail_count))
                 self.proxy_handler.put(proxy)
 

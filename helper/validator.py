@@ -13,7 +13,7 @@
 __author__ = 'JHao'
 
 import re
-from requests import head
+import requests
 from util.six import withMetaclass
 from util.singleton import Singleton
 from handler.configHandler import ConfigHandler
@@ -25,13 +25,14 @@ HEADER = {'User-Agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64; rv:34.0) Gecko/2010
           'Connection': 'keep-alive',
           'Accept-Language': 'zh-CN,zh;q=0.8'}
 
-IP_REGEX = re.compile(r"(.*:.*@)?\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}:\d{1,5}")
+IP_REGEX = re.compile(r".*://\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}:\d{1,5}")
 
 
 class ProxyValidator(withMetaclass(Singleton)):
     pre_validator = []
     http_validator = []
     https_validator = []
+    socks_validator = []
 
     @classmethod
     def addPreValidator(cls, func):
@@ -48,6 +49,11 @@ class ProxyValidator(withMetaclass(Singleton)):
         cls.https_validator.append(func)
         return func
 
+    @classmethod
+    def addSocksValidator(cls, func):
+        cls.socks_validator.append(func)
+        return func
+
 
 @ProxyValidator.addPreValidator
 def formatValidator(proxy):
@@ -58,11 +64,10 @@ def formatValidator(proxy):
 @ProxyValidator.addHttpValidator
 def httpTimeOutValidator(proxy):
     """ http检测超时 """
-
-    proxies = {"http": "http://{proxy}".format(proxy=proxy), "https": "https://{proxy}".format(proxy=proxy)}
+    proxies = {"http": proxy, "https": proxy}
 
     try:
-        r = head(conf.httpUrl, headers=HEADER, proxies=proxies, timeout=conf.verifyTimeout)
+        r = requests.head(conf.httpUrl, headers=HEADER, proxies=proxies, timeout=conf.verifyTimeout)
         return True if r.status_code == 200 else False
     except Exception as e:
         return False
@@ -72,9 +77,21 @@ def httpTimeOutValidator(proxy):
 def httpsTimeOutValidator(proxy):
     """https检测超时"""
 
-    proxies = {"http": "http://{proxy}".format(proxy=proxy), "https": "https://{proxy}".format(proxy=proxy)}
+    proxies = {"http": proxy, "https": proxy}
     try:
-        r = head(conf.httpsUrl, headers=HEADER, proxies=proxies, timeout=conf.verifyTimeout, verify=False)
+        r = requests.head(conf.httpsUrl, headers=HEADER, proxies=proxies, timeout=conf.verifyTimeout, verify=False)
+        return True if r.status_code == 200 else False
+    except Exception as e:
+        return False
+
+
+@ProxyValidator.addSocksValidator
+def socksTimeOutValidator(proxy):
+    """https检测超时"""
+
+    proxies = {"http": proxy, "https": proxy}
+    try:
+        r = requests.head(conf.httpsUrl, headers=HEADER, proxies=proxies, timeout=conf.verifyTimeout, verify=False)
         return True if r.status_code == 200 else False
     except Exception as e:
         return False
@@ -84,3 +101,10 @@ def httpsTimeOutValidator(proxy):
 def customValidatorExample(proxy):
     """自定义validator函数，校验代理是否可用, 返回True/False"""
     return True
+
+
+if __name__ == '__main__':
+    p = ProxyValidator()
+    print(p.http_validator)
+    print(p.https_validator)
+    print(p.socks_validator)

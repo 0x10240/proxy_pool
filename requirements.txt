@@ -10,3 +10,6 @@ Flask==2.1.1;python_version>"3.6"
 Flask==1.0;python_version<="3.6"
 werkzeug==2.1.0;python_version>"3.6"
 werkzeug==0.15.5;python_version<="3.6"
+loguru
+PySocks
+aiohttp_socks
