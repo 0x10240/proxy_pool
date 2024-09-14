@@ -2,17 +2,19 @@
 """
 -------------------------------------------------
    File Name：     launcher
-   Description :   启动器
+   Description :   Launcher
    Author :        JHao
-   date：          2021/3/26
+   Date：          2021/3/26
 -------------------------------------------------
    Change Activity:
-                   2021/3/26: 启动器
+                   2021/3/26: Launcher
+                   2023/09/14: Adapted to use asynchronous scheduler
 -------------------------------------------------
 """
 __author__ = 'JHao'
 
 import sys
+import asyncio
 from db.dbClient import DbClient
 from handler.logHandler import LogHandler
 from handler.configHandler import ConfigHandler
@@ -22,20 +24,21 @@ log = LogHandler('launcher')
 
 def startServer():
     __beforeStart()
-    from api.proxyApi import runFlask
-    runFlask()
+    from api.proxyApi import runFastAPI
+    runFastAPI()
 
 
 def startScheduler():
     __beforeStart()
-    from helper.scheduler import runScheduler
-    runScheduler()
+    from helper.scheduler import main as scheduler_main
+    asyncio.run(scheduler_main())
 
 
 def __beforeStart():
     __showVersion()
     __showConfigure()
-    if __checkDBConfig():
+    # If __checkDBConfig is asynchronous, adjust accordingly
+    if asyncio.run(__checkDBConfig()):
         log.info('exit!')
         sys.exit()
 
@@ -52,7 +55,7 @@ def __showConfigure():
     log.info("ProxyPool configure PROXY_FETCHER: %s" % conf.fetchers)
 
 
-def __checkDBConfig():
+async def __checkDBConfig():
     conf = ConfigHandler()
     db = DbClient(conf.dbConn)
     log.info("============ DATABASE CONFIGURE ================")
@@ -62,4 +65,4 @@ def __checkDBConfig():
     log.info("DB_NAME: %s" % db.db_name)
     log.info("DB_USER: %s" % db.db_user)
     log.info("=================================================")
-    return db.test()
+    return await db.test()

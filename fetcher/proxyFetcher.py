@@ -13,7 +13,9 @@
 __author__ = 'JHao'
 
 import re
-import time
+import json
+import asyncio
+import collections
 
 from util.webRequest import WebRequest
 from loguru import logger
@@ -26,33 +28,44 @@ class ProxyFetcher(object):
     """
 
     @staticmethod
-    def common():
-        """
-        ip:port 通用类爬取
-        """
-        for source_info in FETCHER_COMMON_SOURCE:
+    async def common():
+        semaphore = asyncio.Semaphore(10)  # 限制并发数为 10
+        results = dict()
+        lock = asyncio.Lock()  # 创建锁
+
+        async def fetch_source(source_info):
             url = source_info['url']
-            type = source_info['type']
+            proxy_type = source_info['type']
             source = source_info['source']
 
-            try:
-                res = WebRequest().get(url=url).response
-                if res.status_code == 200:
-                    regex = r"\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}:\d{1,5}"
-                    proxies = re.findall(regex, res.text)
-                    for proxy in proxies:
-                        if isinstance(proxy, str) and proxy.count(':') == 1:
-                            ip, port = proxy.split(':')
-                            yield {
-                                'type': type,
-                                'ip': ip,
-                                'port': port,
-                                'source': source
-                            }
-            except Exception as e:
-                logger.exception(f'url: {url}, type: {type}, source: {source} 抓取异常: ', e)
+            async with semaphore:  # 信号量限制
+                try:
+                    status, text = await WebRequest().get(url=url)
+                    if status == 200 and text:
+                        regex = r"\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}:\d{1,5}"
+                        proxies = re.findall(regex, text)
 
-            time.sleep(10)
+                        async with lock:  # 使用锁来保护 results 的修改
+                            logger.info(f'proxies from: {source}, {proxy_type} count: {len(proxies)}')
+                            for proxy in proxies:
+                                if isinstance(proxy, str) and proxy.count(':') == 1:
+                                    ip, port = proxy.split(':')
+                                    results[proxy] = {
+                                        'type': proxy_type,
+                                        'ip': ip,
+                                        'port': port,
+                                        'source': source
+                                    }
+                except Exception as e:
+                    logger.exception(f'url: {url}, type: {proxy_type}, source: {source} Fetch error: {e}')
+
+        tasks = [fetch_source(source_info) for source_info in FETCHER_COMMON_SOURCE]
+        await asyncio.gather(*tasks)
+
+        values = results.values()
+        logger.info(f'common proxies count: {len(values)}')
+        for v in values:
+            yield v
 
     @staticmethod
     def freeProxy01():
@@ -200,12 +213,30 @@ class ProxyFetcher(object):
         #     yield ':'.join(proxy)
         return None
 
+    # @staticmethod
+    # async def freeProxy11():
+    #     async with aiohttp.ClientSession() as session:
+    #         for page in range(1, 10):
+    #             url = f"http://example.com/proxies?page={page}"
+    #             try:
+    #                 async with session.get(url) as response:
+    #                     if response.status == 200:
+    #                         text = await response.text()
+    #                         proxies = parse_proxies(text)
+    #                         for proxy in proxies:
+    #                             yield proxy
+    #             except Exception as e:
+    #                 logger.exception(f"Failed to fetch proxies from {url}: {e}")
+    #             await asyncio.sleep(1)  # To prevent overloading the server
+
     @staticmethod
-    def freeProxy11():
+    async def freeProxy11():
         """ 稻壳代理 https://www.docip.net/ """
-        r = WebRequest().get("https://www.docip.net/data/free.json", timeout=10)
+        url = "https://www.docip.net/data/free.json"
+        _, content = await WebRequest().get(url=url)
         try:
-            for item in r.json['data']:
+            data = json.loads(content)
+            for item in data['data']:
                 ip, port = item['ip'].split(':')
                 yield {
                     'type': 'http',
@@ -213,75 +244,83 @@ class ProxyFetcher(object):
                     'port': port,
                     'source': 'docip.net'
                 }
+
         except Exception as e:
             print(e)
 
-    # @staticmethod
-    # def wallProxy01():
-    #     """
-    #     PzzQz https://pzzqz.com/
-    #     """
-    #     from requests import Session
-    #     from lxml import etree
-    #     session = Session()
-    #     try:
-    #         index_resp = session.get("https://pzzqz.com/", timeout=20, verify=False).text
-    #         x_csrf_token = re.findall('X-CSRFToken": "(.*?)"', index_resp)
-    #         if x_csrf_token:
-    #             data = {"http": "on", "ping": "3000", "country": "cn", "ports": ""}
-    #             proxy_resp = session.post("https://pzzqz.com/", verify=False,
-    #                                       headers={"X-CSRFToken": x_csrf_token[0]}, json=data).json()
-    #             tree = etree.HTML(proxy_resp["proxy_html"])
-    #             for tr in tree.xpath("//tr"):
-    #                 ip = "".join(tr.xpath("./td[1]/text()"))
-    #                 port = "".join(tr.xpath("./td[2]/text()"))
-    #                 yield "%s:%s" % (ip, port)
-    #     except Exception as e:
-    #         print(e)
 
-    # @staticmethod
-    # def freeProxy10():
-    #     """
-    #     墙外网站 cn-proxy
-    #     :return:
-    #     """
-    #     urls = ['http://cn-proxy.com/', 'http://cn-proxy.com/archives/218']
-    #     request = WebRequest()
-    #     for url in urls:
-    #         r = request.get(url, timeout=10)
-    #         proxies = re.findall(r'<td>(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})</td>[\w\W]<td>(\d+)</td>', r.text)
-    #         for proxy in proxies:
-    #             yield ':'.join(proxy)
+# @staticmethod
+# def wallProxy01():
+#     """
+#     PzzQz https://pzzqz.com/
+#     """
+#     from requests import Session
+#     from lxml import etree
+#     session = Session()
+#     try:
+#         index_resp = session.get("https://pzzqz.com/", timeout=20, verify=False).text
+#         x_csrf_token = re.findall('X-CSRFToken": "(.*?)"', index_resp)
+#         if x_csrf_token:
+#             data = {"http": "on", "ping": "3000", "country": "cn", "ports": ""}
+#             proxy_resp = session.post("https://pzzqz.com/", verify=False,
+#                                       headers={"X-CSRFToken": x_csrf_token[0]}, json=data).json()
+#             tree = etree.HTML(proxy_resp["proxy_html"])
+#             for tr in tree.xpath("//tr"):
+#                 ip = "".join(tr.xpath("./td[1]/text()"))
+#                 port = "".join(tr.xpath("./td[2]/text()"))
+#                 yield "%s:%s" % (ip, port)
+#     except Exception as e:
+#         print(e)
 
-    # @staticmethod
-    # def freeProxy11():
-    #     """
-    #     https://proxy-list.org/english/index.php
-    #     :return:
-    #     """
-    #     urls = ['https://proxy-list.org/english/index.php?p=%s' % n for n in range(1, 10)]
-    #     request = WebRequest()
-    #     import base64
-    #     for url in urls:
-    #         r = request.get(url, timeout=10)
-    #         proxies = re.findall(r"Proxy\('(.*?)'\)", r.text)
-    #         for proxy in proxies:
-    #             yield base64.b64decode(proxy).decode()
+# @staticmethod
+# def freeProxy10():
+#     """
+#     墙外网站 cn-proxy
+#     :return:
+#     """
+#     urls = ['http://cn-proxy.com/', 'http://cn-proxy.com/archives/218']
+#     request = WebRequest()
+#     for url in urls:
+#         r = request.get(url, timeout=10)
+#         proxies = re.findall(r'<td>(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})</td>[\w\W]<td>(\d+)</td>', r.text)
+#         for proxy in proxies:
+#             yield ':'.join(proxy)
 
-    # @staticmethod
-    # def freeProxy12():
-    #     urls = ['https://list.proxylistplus.com/Fresh-HTTP-Proxy-List-1']
-    #     request = WebRequest()
-    #     for url in urls:
-    #         r = request.get(url, timeout=10)
-    #         proxies = re.findall(r'<td>(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})</td>[\s\S]*?<td>(\d+)</td>', r.text)
-    #         for proxy in proxies:
-    #             yield ':'.join(proxy)
+# @staticmethod
+# def freeProxy11():
+#     """
+#     https://proxy-list.org/english/index.php
+#     :return:
+#     """
+#     urls = ['https://proxy-list.org/english/index.php?p=%s' % n for n in range(1, 10)]
+#     request = WebRequest()
+#     import base64
+#     for url in urls:
+#         r = request.get(url, timeout=10)
+#         proxies = re.findall(r"Proxy\('(.*?)'\)", r.text)
+#         for proxy in proxies:
+#             yield base64.b64decode(proxy).decode()
+
+# @staticmethod
+# def freeProxy12():
+#     urls = ['https://list.proxylistplus.com/Fresh-HTTP-Proxy-List-1']
+#     request = WebRequest()
+#     for url in urls:
+#         r = request.get(url, timeout=10)
+#         proxies = re.findall(r'<td>(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})</td>[\s\S]*?<td>(\d+)</td>', r.text)
+#         for proxy in proxies:
+#             yield ':'.join(proxy)
 
 
 if __name__ == '__main__':
     p = ProxyFetcher()
-    for i in p.common():
-        print(i)
+
+
+    async def run():
+        async for proxy_data in p.common():
+            pass
+
+
+    asyncio.run(run())
 
 # http://nntime.com/proxy-list-01.htm

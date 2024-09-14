@@ -26,61 +26,61 @@ class ProxyHandler(object):
         self.db = DbClient(self.conf.dbConn)
         self.db.changeTable(self.conf.tableName)
 
-    def get(self, https=False):
+    async def get(self, https=False):
         """
         return a proxy
         Args:
             https: True/False
         Returns:
         """
-        proxy = self.db.get(https)
+        proxy = await self.db.get(https)
         return Proxy.createFromJson(proxy) if proxy else None
 
-    def pop(self, https):
+    async def pop(self, https):
         """
         return and delete a useful proxy
         :return:
         """
-        proxy = self.db.pop(https)
+        proxy = await self.db.pop(https)
         if proxy:
             return Proxy.createFromJson(proxy)
         return None
 
-    def put(self, proxy):
+    async def put(self, proxy):
         """
         put proxy into use proxy
         :return:
         """
-        self.db.put(proxy)
+        await self.db.put(proxy)
 
-    def delete(self, proxy):
+    async def delete(self, proxy):
         """
         delete useful proxy
         :param proxy:
         :return:
         """
-        return self.db.delete(proxy.proxy)
+        return await self.db.delete(proxy.proxy)
 
-    def getAll(self, https=False):
+    async def getAll(self, type=None):
         """
         get all proxy from pool as Proxy list
         :return:
         """
-        proxies = self.db.getAll(https)
+        proxies = await self.db.getAll(type)
         return [Proxy.createFromJson(_) for _ in proxies]
 
-    def exists(self, proxy):
+    async def exists(self, proxy):
         """
         check proxy exists
         :param proxy:
         :return:
         """
-        return self.db.exists(proxy.proxy)
+        return await self.db.exists(proxy.proxy)
 
-    def getCount(self):
+    async def getCount(self):
         """
         return raw_proxy and use_proxy count
         :return:
         """
-        total_use_proxy = self.db.getCount()
+        total_use_proxy = await self.db.getCount()
         return {'count': total_use_proxy}

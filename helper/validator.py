@@ -1,29 +1,34 @@
 # -*- coding: utf-8 -*-
 """
 -------------------------------------------------
-   File Name：     _validators
-   Description :   定义proxy验证方法
+   File Name：     validator.py
+   Description :   Define proxy validation methods using aiohttp
    Author :        JHao
-   date：          2021/5/25
+   Date：          2021/5/25
 -------------------------------------------------
    Change Activity:
-                   2023/03/10: 支持带用户认证的代理格式 username:password@ip:port
+                   2023/03/10: Support proxies with user authentication username:password@ip:port
+                   2023/09/14: Rewrite using aiohttp and asynchronous programming
 -------------------------------------------------
 """
-__author__ = 'JHao'
 
 import re
-import requests
+import aiohttp
+import asyncio
+
 from util.six import withMetaclass
 from util.singleton import Singleton
 from handler.configHandler import ConfigHandler
+from aiohttp_socks import ProxyConnector
 
 conf = ConfigHandler()
 
-HEADER = {'User-Agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64; rv:34.0) Gecko/20100101 Firefox/34.0',
-          'Accept': '*/*',
-          'Connection': 'keep-alive',
-          'Accept-Language': 'zh-CN,zh;q=0.8'}
+HEADER = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64; rv:34.0) Gecko/20100101 Firefox/34.0',
+    'Accept': '*/*',
+    'Connection': 'keep-alive',
+    'Accept-Language': 'zh-CN,zh;q=0.8'
+}
 
 IP_REGEX = re.compile(r".*://\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}:\d{1,5}")
 
@@ -56,55 +61,62 @@ class ProxyValidator(withMetaclass(Singleton)):
 
 
 @ProxyValidator.addPreValidator
-def formatValidator(proxy):
-    """检查代理格式"""
+async def formatValidator(proxy):
+    """Check proxy format"""
     return True if IP_REGEX.fullmatch(proxy) else False
 
 
 @ProxyValidator.addHttpValidator
-def httpTimeOutValidator(proxy):
-    """ http检测超时 """
-    proxies = {"http": proxy, "https": proxy}
-
+async def httpTimeOutValidator(proxy):
+    """HTTP detection with timeout using aiohttp"""
     try:
-        r = requests.head(conf.httpUrl, headers=HEADER, proxies=proxies, timeout=conf.verifyTimeout)
-        return True if r.status_code == 200 else False
-    except Exception as e:
+        timeout = aiohttp.ClientTimeout(total=conf.verifyTimeout)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.head(conf.httpUrl, headers=HEADER, proxy=proxy) as resp:
+                return resp.status == 200
+    except Exception:
         return False
 
 
 @ProxyValidator.addHttpsValidator
-def httpsTimeOutValidator(proxy):
-    """https检测超时"""
-
-    proxies = {"http": proxy, "https": proxy}
+async def httpsTimeOutValidator(proxy):
+    """HTTPS detection with timeout using aiohttp"""
     try:
-        r = requests.head(conf.httpsUrl, headers=HEADER, proxies=proxies, timeout=conf.verifyTimeout, verify=False)
-        return True if r.status_code == 200 else False
-    except Exception as e:
+        timeout = aiohttp.ClientTimeout(total=conf.verifyTimeout)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.head(conf.httpsUrl, headers=HEADER, proxy=proxy, ssl=False) as resp:
+                return resp.status == 200
+    except Exception:
         return False
 
 
 @ProxyValidator.addSocksValidator
-def socksTimeOutValidator(proxy):
-    """https检测超时"""
-
-    proxies = {"http": proxy, "https": proxy}
+async def socksTimeOutValidator(proxy):
+    """SOCKS detection with timeout using aiohttp"""
+    # Note: For SOCKS proxies, you need to install aiohttp_socks
     try:
-        r = requests.head(conf.httpsUrl, headers=HEADER, proxies=proxies, timeout=conf.verifyTimeout, verify=False)
-        return True if r.status_code == 200 else False
+        timeout = aiohttp.ClientTimeout(total=conf.verifyTimeout)
+        connector = ProxyConnector.from_url(proxy)
+        async with aiohttp.ClientSession(
+                connector=connector,
+                timeout=timeout
+        ) as session, session.get(conf.httpsUrl, headers=HEADER, ssl=False) as resp:
+            return resp.status == 200
     except Exception as e:
+        # logger.exception(f'socksTimeOutValidator error: {e}')
         return False
 
 
 @ProxyValidator.addHttpValidator
-def customValidatorExample(proxy):
-    """自定义validator函数，校验代理是否可用, 返回True/False"""
+async def customValidatorExample(proxy):
+    """Custom validator function, check if the proxy is available, return True/False"""
+    # Implement your custom validation logic here
     return True
 
 
 if __name__ == '__main__':
     p = ProxyValidator()
-    print(p.http_validator)
-    print(p.https_validator)
-    print(p.socks_validator)
+    for func in p.socks_validator:
+        proxy = 'socks5://192.168.50.88:30001'
+        res = asyncio.run(func(proxy))
+        print(res)

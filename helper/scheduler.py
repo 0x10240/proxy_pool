@@ -2,21 +2,21 @@
 """
 -------------------------------------------------
    File Name：     proxyScheduler
-   Description :
+   Description :   Schedule proxy fetching and checking using asyncio
    Author :        JHao
-   date：          2019/8/5
+   Date：          2019/8/5
 -------------------------------------------------
    Change Activity:
                    2019/08/05: proxyScheduler
-                   2021/02/23: runProxyCheck时,剩余代理少于POOL_SIZE_MIN时执行抓取
+                   2021/02/23: Run fetch when remaining proxies are fewer than POOL_SIZE_MIN during runProxyCheck
+                   2023/09/14: Adapted to use asynchronous versions of validator and checker
+                   2023/09/14: Modified to run fetch and check immediately at startup
 -------------------------------------------------
 """
 __author__ = 'JHao'
 
-from apscheduler.schedulers.blocking import BlockingScheduler
-from apscheduler.executors.pool import ProcessPoolExecutor
-
-from util.six import Queue
+import asyncio
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from helper.fetch import Fetcher
 from helper.check import Checker
 from handler.logHandler import LogHandler
@@ -24,48 +24,60 @@ from handler.proxyHandler import ProxyHandler
 from handler.configHandler import ConfigHandler
 
 
-def __runProxyFetch():
-    proxy_queue = Queue()
+async def __runProxyFetch():
+    proxy_queue = asyncio.Queue()
     proxy_fetcher = Fetcher()
 
-    for proxy in proxy_fetcher.run():
-        proxy_queue.put(proxy)
+    # Assuming Fetcher.run() is now asynchronous
+    async for proxy in proxy_fetcher.run():
+        await proxy_queue.put(proxy)
 
-    Checker("raw", proxy_queue)
+    await Checker("raw", proxy_queue)
 
 
-def __runProxyCheck():
+async def __runProxyCheck():
     proxy_handler = ProxyHandler()
-    proxy_queue = Queue()
-    if proxy_handler.db.getCount().get("total", 0) < proxy_handler.conf.poolSizeMin:
-        __runProxyFetch()
-    for proxy in proxy_handler.getAll():
-        proxy_queue.put(proxy)
-    Checker("use", proxy_queue)
+    proxy_queue = asyncio.Queue()
+    conf = ConfigHandler()
+
+    count = await proxy_handler.db.getCount()
+    if count.get("total", 0) < conf.poolSizeMin:
+        await __runProxyFetch()
+    proxies = await proxy_handler.getAll()
+    for proxy in proxies:
+        await proxy_queue.put(proxy)
+    await Checker("use", proxy_queue)
 
 
-def runScheduler():
-    __runProxyFetch()
-
+async def main():
     timezone = ConfigHandler().timezone
     scheduler_log = LogHandler("scheduler")
-    scheduler = BlockingScheduler(logger=scheduler_log, timezone=timezone)
-
-    scheduler.add_job(__runProxyFetch, 'interval', minutes=5, id="proxy_fetch", name="proxy采集")
-    scheduler.add_job(__runProxyCheck, 'interval', minutes=2, id="proxy_check", name="proxy检查")
-    executors = {
-        'default': {'type': 'threadpool', 'max_workers': 20},
-        'processpool': ProcessPoolExecutor(max_workers=5)
-    }
     job_defaults = {
         'coalesce': False,
         'max_instances': 10
     }
 
-    scheduler.configure(executors=executors, job_defaults=job_defaults, timezone=timezone)
+    # Initialize the AsyncIOScheduler without specifying executors
+    scheduler = AsyncIOScheduler(logger=scheduler_log, timezone=timezone, job_defaults=job_defaults)
 
+    # Add jobs to the scheduler
+    scheduler.add_job(__runProxyFetch, 'interval', minutes=10, id="proxy_fetch", name="Proxy Fetch")
+    scheduler.add_job(__runProxyCheck, 'interval', minutes=3, id="proxy_check", name="Proxy Check")
+
+    # Start the scheduler
     scheduler.start()
+
+    # Run the functions immediately
+    await __runProxyFetch()
+    await __runProxyCheck()
+
+    try:
+        # Keep the event loop running
+        while True:
+            await asyncio.sleep(1)
+    except (KeyboardInterrupt, SystemExit):
+        scheduler.shutdown()
 
 
 if __name__ == '__main__':
-    runScheduler()
+    asyncio.run(main())

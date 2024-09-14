@@ -1,18 +1,19 @@
 # -*- coding: utf-8 -*-
 """
 -------------------------------------------------
-   File Name：     fetchScheduler
-   Description :
+   File Name：     fetch.py
+   Description :   Asynchronous proxy fetching
    Author :        JHao
-   date：          2019/8/6
+   Date：          2019/8/6
 -------------------------------------------------
    Change Activity:
-                   2021/11/18: 多线程采集
+                   2021/11/18: Multi-threaded fetching
+                   2023/09/14: Adapted to use asynchronous fetching with asyncio
 -------------------------------------------------
 """
 __author__ = 'JHao'
 
-from threading import Thread
+import asyncio
 from helper.proxy import Proxy
 from helper.check import DoValidator
 from handler.logHandler import LogHandler
@@ -22,69 +23,60 @@ from handler.configHandler import ConfigHandler
 from loguru import logger
 
 
-class _ThreadFetcher(Thread):
-
-    def __init__(self, fetch_source, proxy_dict):
-        Thread.__init__(self)
-        self.fetch_source = fetch_source
-        self.proxy_dict = proxy_dict
-        self.fetcher = getattr(ProxyFetcher, fetch_source, None)
-        self.log = LogHandler("fetcher")
-        self.conf = ConfigHandler()
-        self.proxy_handler = ProxyHandler()
-
-    def run(self):
-        logger.info("ProxyFetch - {func}: start".format(func=self.fetch_source))
-        try:
-            for proxy in self.fetcher():
-                type, ip, port, source = proxy.get('type'), proxy.get('ip'), proxy.get('port'), proxy.get('source')
-                proxy_str = f"{type}://{ip}:{port}"
-
-                logger.info('ProxyFetch - %s: %s ok' % (self.fetch_source, proxy_str.ljust(30)))
-
-                if proxy_str in self.proxy_dict:
-                    self.proxy_dict[proxy_str].add_source(source)
-                else:
-                    self.proxy_dict[proxy_str] = Proxy(proxy_str, source=source)
-        except Exception as e:
-            logger.exception(f"ProxyFetch - {self.fetch_source}: error: {e}")
-
-
-class Fetcher(object):
+class Fetcher:
     name = "fetcher"
 
     def __init__(self):
         self.log = LogHandler(self.name)
         self.conf = ConfigHandler()
+        self.proxy_handler = ProxyHandler()
 
-    def run(self):
+    async def run(self):
         """
-        fetch proxy with proxyFetcher
-        :return:
+        Fetch proxies asynchronously
         """
         proxy_dict = dict()
-        thread_list = list()
         logger.info("ProxyFetch : start")
 
+        tasks = []
         for fetch_source in self.conf.fetchers:
-            logger.info("ProxyFetch - {func}: start".format(func=fetch_source))
+            logger.info(f"ProxyFetch - {fetch_source}: start")
             fetcher = getattr(ProxyFetcher, fetch_source, None)
             if not fetcher:
-                logger.error("ProxyFetch - {func}: class method not exists!".format(func=fetch_source))
+                logger.error(f"ProxyFetch - {fetch_source}: method not exists!")
                 continue
             if not callable(fetcher):
-                logger.error("ProxyFetch - {func}: must be class method".format(func=fetch_source))
+                logger.error(f"ProxyFetch - {fetch_source}: must be callable")
                 continue
-            thread_list.append(_ThreadFetcher(fetch_source, proxy_dict))
 
-        for thread in thread_list:
-            thread.setDaemon(True)
-            thread.start()
+            # Create a task for the fetcher
+            task = asyncio.create_task(self._fetch_proxies(fetch_source, fetcher, proxy_dict))
+            tasks.append(task)
 
-        for thread in thread_list:
-            thread.join()
+        # Wait for all fetcher tasks to complete
+        await asyncio.gather(*tasks)
 
         logger.info("ProxyFetch - all complete!")
         for item in proxy_dict.values():
-            if DoValidator.preValidator(item.proxy):
+            if await DoValidator.preValidator(item.proxy):
                 yield item
+
+    async def _fetch_proxies(self, fetch_source, fetcher, proxy_dict):
+        logger.info(f"ProxyFetch - {fetch_source}: fetching proxies")
+        try:
+            async for proxy_data in fetcher():
+                # Process proxy_data
+                proxy_type = proxy_data.get('type')
+                ip = proxy_data.get('ip')
+                port = proxy_data.get('port')
+                source = proxy_data.get('source')
+                proxy_str = f"{proxy_type}://{ip}:{port}"
+
+                logger.info(f'ProxyFetch - {source}: {proxy_str.ljust(30)} ok')
+
+                if proxy_str in proxy_dict:
+                    proxy_dict[proxy_str].add_source(source)
+                else:
+                    proxy_dict[proxy_str] = Proxy(proxy_str, source=source)
+        except Exception as e:
+            logger.exception(f"ProxyFetch - {fetch_source}: error: {e}")

@@ -1,98 +1,107 @@
 # -*- coding: utf-8 -*-
-# !/usr/bin/env python
 """
 -------------------------------------------------
-   File Name：     ProxyApi.py
-   Description :   WebApi
-   Author :       JHao
-   date：          2016/12/4
+   File Name：     proxyApi.py
+   Description :   API using FastAPI with async support
+   Author :        JHao
+   Date：          2023/09/14
 -------------------------------------------------
    Change Activity:
-                   2016/12/04: WebApi
-                   2019/08/14: 集成Gunicorn启动方式
-                   2020/06/23: 新增pop接口
-                   2022/07/21: 更新count接口
+                   2023/09/14: Rewritten using FastAPI with async support
 -------------------------------------------------
 """
 __author__ = 'JHao'
 
 import platform
-from werkzeug.wrappers import Response
-from flask import Flask, jsonify, request
+from typing import List, Dict, Any, Optional
 
-from util.six import iteritems
+from fastapi import FastAPI, Query
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel
+
 from helper.proxy import Proxy
 from handler.proxyHandler import ProxyHandler
 from handler.configHandler import ConfigHandler
 
-app = Flask(__name__)
+app = FastAPI()
 conf = ConfigHandler()
 proxy_handler = ProxyHandler()
 
-
-class JsonResponse(Response):
-    @classmethod
-    def force_type(cls, response, environ=None):
-        if isinstance(response, (dict, list)):
-            response = jsonify(response)
-
-        return super(JsonResponse, cls).force_type(response, environ)
-
-
-app.response_class = JsonResponse
-
 api_list = [
-    {"url": "/get", "params": "type: ''https'|''", "desc": "get a proxy"},
-    {"url": "/pop", "params": "", "desc": "get and delete a proxy"},
+    {"url": "/get", "params": "type: 'https' or ''", "desc": "get a proxy"},
+    {"url": "/pop", "params": "type: 'https' or ''", "desc": "get and delete a proxy"},
     {"url": "/delete", "params": "proxy: 'e.g. 127.0.0.1:8080'", "desc": "delete an unable proxy"},
-    {"url": "/all", "params": "type: ''https'|''", "desc": "get all proxy from proxy pool"},
+    {"url": "/all", "params": "type: 'https' or ''", "desc": "get all proxies from proxy pool"},
     {"url": "/count", "params": "", "desc": "return proxy count"}
-    # 'refresh': 'refresh proxy pool',
 ]
 
 
-@app.route('/')
-def index():
-    return {'url': api_list}
+class ProxyModel(BaseModel):
+    proxy: str
+    https: bool
+    fail_count: int
+    region: str
+    anonymous: str
+    source: str
+    check_count: int
+    last_status: str
+    last_time: str
 
 
-@app.route('/get/')
-def get():
-    https = request.args.get("type", "").lower() == 'https'
-    proxy = proxy_handler.get(https)
-    return proxy.to_dict if proxy else {"code": 0, "src": "no proxy"}
+@app.get("/", response_class=JSONResponse)
+async def index():
+    return {"url": api_list}
 
 
-@app.route('/pop/')
-def pop():
-    https = request.args.get("type", "").lower() == 'https'
-    proxy = proxy_handler.pop(https)
-    return proxy.to_dict if proxy else {"code": 0, "src": "no proxy"}
+@app.get("/get/")
+async def get_proxy(type: Optional[str] = Query(default="", description="Type of proxy: 'https' or ''")):
+    https = type.lower() == 'https'
+    proxy = await proxy_handler.get(https)
+    if proxy:
+        return proxy.to_dict
+    else:
+        return {"code": 0, "src": "no proxy"}
 
 
-@app.route('/refresh/')
-def refresh():
-    # TODO refresh会有守护程序定时执行，由api直接调用性能较差，暂不使用
-    return 'success'
+@app.get("/pop/")
+async def pop_proxy(type: Optional[str] = Query(default="", description="Type of proxy: 'https' or ''")):
+    https = type.lower() == 'https'
+    proxy = await proxy_handler.pop(https)
+    if proxy:
+        return proxy.to_dict
+    else:
+        return {"code": 0, "src": "no proxy"}
 
 
-@app.route('/all/')
-def getAll():
-    https = request.args.get("type", "").lower() == 'https'
-    proxies = proxy_handler.getAll(https)
-    return jsonify([_.to_dict for _ in proxies])
+@app.get("/refresh/")
+async def refresh():
+    # TODO: The refresh operation is handled by a scheduled task. Direct API calls may have poor performance.
+    return {"message": "success"}
 
 
-@app.route('/delete/', methods=['GET'])
-def delete():
-    proxy = request.args.get('proxy')
-    status = proxy_handler.delete(Proxy(proxy))
+@app.get("/all/", response_model=List[Dict[str, Any]])
+async def get_all(
+        type: Optional[str] = Query(default="", description="Type of proxy: 'https' or ''"),
+        source: Optional[str] = Query(default="", description="source of proxy"),
+        last_status: Optional[bool] = Query(default=False, description="last status of proxy"),
+):
+    proxies = await proxy_handler.getAll(type)
+    if source:
+        proxies = [proxy for proxy in proxies if proxy.source == source]
+    if last_status:
+        proxies = [proxy for proxy in proxies if proxy.last_status == last_status]
+    return [proxy.to_dict for proxy in proxies]
+
+
+@app.get("/delete/")
+async def delete_proxy(proxy: str):
+    status = await proxy_handler.delete(Proxy(proxy))
     return {"code": 0, "src": status}
 
 
-@app.route('/count/')
-def getCount():
-    proxies = proxy_handler.getAll()
+@app.get("/count/")
+async def get_count():
+    proxies = await proxy_handler.getAll()
     http_type_dict = {}
     source_dict = {}
     for proxy in proxies:
@@ -103,36 +112,13 @@ def getCount():
     return {"http_type": http_type_dict, "source": source_dict, "count": len(proxies)}
 
 
-def runFlask():
+def runFastAPI():
+    import uvicorn
     if platform.system() == "Windows":
-        app.run(host=conf.serverHost, port=conf.serverPort)
+        uvicorn.run(app, host=conf.serverHost, port=conf.serverPort)
     else:
-        import gunicorn.app.base
-
-        class StandaloneApplication(gunicorn.app.base.BaseApplication):
-
-            def __init__(self, app, options=None):
-                self.options = options or {}
-                self.application = app
-                super(StandaloneApplication, self).__init__()
-
-            def load_config(self):
-                _config = dict([(key, value) for key, value in iteritems(self.options)
-                                if key in self.cfg.settings and value is not None])
-                for key, value in iteritems(_config):
-                    self.cfg.set(key.lower(), value)
-
-            def load(self):
-                return self.application
-
-        _options = {
-            'bind': '%s:%s' % (conf.serverHost, conf.serverPort),
-            'workers': 4,
-            'accesslog': '-',  # log to stdout
-            'access_log_format': '%(h)s %(l)s %(t)s "%(r)s" %(s)s "%(a)s"'
-        }
-        StandaloneApplication(app, _options).run()
+        uvicorn.run("api.proxyApi:app", host=conf.serverHost, port=conf.serverPort, workers=4)
 
 
 if __name__ == '__main__':
-    runFlask()
+    runFastAPI()

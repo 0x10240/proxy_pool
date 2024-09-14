@@ -1,22 +1,24 @@
 # -*- coding: utf-8 -*-
-# !/usr/bin/env python
 """
 -------------------------------------------------
-   File Name：    DbClient.py
-   Description :  DB工厂类
-   Author :       JHao
-   date：          2016/12/2
+   File Name：     DbClient.py
+   Description :   Database Factory Class
+   Author :        JHao
+   Date：          2016/12/2
 -------------------------------------------------
    Change Activity:
-                   2016/12/02:   DB工厂类
-                   2020/07/03:   取消raw_proxy储存
+                   2016/12/02:   Database Factory Class
+                   2020/07/03:   Removed raw_proxy storage
+                   2023/09/14:   Adapted to use asynchronous database clients
 -------------------------------------------------
 """
 __author__ = 'JHao'
 
 import os
 import sys
+import asyncio
 
+from helper.proxy import Proxy
 from util.six import urlparse, withMetaclass
 from util.singleton import Singleton
 
@@ -25,33 +27,30 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 class DbClient(withMetaclass(Singleton)):
     """
-    DbClient DB工厂类 提供get/put/update/pop/delete/exists/getAll/clean/getCount/changeTable方法
+    DbClient is a database factory class providing methods:
+    get/put/update/pop/delete/exists/getAll/clear/getCount/changeTable
 
+    Abstract method definitions:
+        get(): Return a proxy randomly;
+        put(proxy): Store a proxy;
+        pop(): Return and delete a proxy sequentially;
+        update(proxy): Update specified proxy information;
+        delete(proxy): Delete specified proxy;
+        exists(proxy): Check if specified proxy exists;
+        getAll(): Return all proxies;
+        clear(): Clear all proxy information;
+        getCount(): Return proxy statistics;
+        changeTable(name): Switch the operation object
 
-    抽象方法定义：
-        get(): 随机返回一个proxy;
-        put(proxy): 存入一个proxy;
-        pop(): 顺序返回并删除一个proxy;
-        update(proxy): 更新指定proxy信息;
-        delete(proxy): 删除指定proxy;
-        exists(proxy): 判断指定proxy是否存在;
-        getAll(): 返回所有代理;
-        clean(): 清除所有proxy信息;
-        getCount(): 返回proxy统计信息;
-        changeTable(name): 切换操作对象
-
-
-        所有方法需要相应类去具体实现：
-            ssdb: ssdbClient.py
-            redis: redisClient.py
-            mongodb: mongodbClient.py
-
+    All methods need to be implemented by the corresponding class:
+        ssdb: ssdbClient.py
+        redis: redisClient.py
+        mongodb: mongodbClient.py
     """
 
     def __init__(self, db_conn):
         """
-        init
-        :return:
+        Initialize the database client
         """
         self.parseDbConn(db_conn)
         self.__initDbClient()
@@ -69,8 +68,7 @@ class DbClient(withMetaclass(Singleton)):
 
     def __initDbClient(self):
         """
-        init DB Client
-        :return:
+        Initialize the database client
         """
         __type = None
         if "SSDB" == self.db_type:
@@ -80,41 +78,47 @@ class DbClient(withMetaclass(Singleton)):
         else:
             pass
         assert __type, 'type error, Not support DB type: {}'.format(self.db_type)
-        self.client = getattr(__import__(__type), "%sClient" % self.db_type.title())(host=self.db_host,
-                                                                                     port=self.db_port,
-                                                                                     username=self.db_user,
-                                                                                     password=self.db_pwd,
-                                                                                     db=self.db_name)
+        module = __import__(__type)
+        client_class = getattr(module, "%sClient" % self.db_type.title())
+        self.client = client_class(host=self.db_host,
+                                   port=self.db_port,
+                                   username=self.db_user,
+                                   password=self.db_pwd,
+                                   db=self.db_name)
 
-    def get(self, https, **kwargs):
-        return self.client.get(https, **kwargs)
+    async def get(self, https, **kwargs):
+        return await self.client.get(https, **kwargs)
 
-    def put(self, key, **kwargs):
-        return self.client.put(key, **kwargs)
+    async def put(self, key, **kwargs):
+        return await self.client.put(key, **kwargs)
 
-    def update(self, key, value, **kwargs):
-        return self.client.update(key, value, **kwargs)
+    async def update(self, key, value, **kwargs):
+        return await self.client.update(key, value, **kwargs)
 
-    def delete(self, key, **kwargs):
-        return self.client.delete(key, **kwargs)
+    async def delete(self, key, **kwargs):
+        return await self.client.delete(key, **kwargs)
 
-    def exists(self, key, **kwargs):
-        return self.client.exists(key, **kwargs)
+    async def exists(self, key, **kwargs):
+        return await self.client.exists(key, **kwargs)
 
-    def pop(self, https, **kwargs):
-        return self.client.pop(https, **kwargs)
+    async def pop(self, https, **kwargs):
+        return await self.client.pop(https, **kwargs)
 
-    def getAll(self, https):
-        return self.client.getAll(https)
+    async def getAll(self, type=None):
+        return await self.client.getAll(type)
 
-    def clear(self):
-        return self.client.clear()
+    async def clear(self):
+        return await self.client.clear()
 
     def changeTable(self, name):
         self.client.changeTable(name)
 
-    def getCount(self):
-        return self.client.getCount()
+    async def getCount(self):
+        return await self.client.getCount()
 
-    def test(self):
-        return self.client.test()
+    async def test(self):
+        return await self.client.test()
+
+if __name__ == '__main__':
+    p = Proxy("socks5://127.0.0.1:1080")
+    print(p.to_json)

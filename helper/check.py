@@ -1,165 +1,219 @@
 # -*- coding: utf-8 -*-
 """
 -------------------------------------------------
-   File Name：     check
-   Description :   执行代理校验
+   File Name：     check.py
+   Description :   Execute proxy validation using aiohttp and asyncio
    Author :        JHao
-   date：          2019/8/6
+   Date：          2019/8/6
 -------------------------------------------------
    Change Activity:
-                   2019/08/06: 执行代理校验
-                   2021/05/25: 分别校验http和https
-                   2022/08/16: 获取代理Region信息
+                   2019/08/06: Execute proxy validation
+                   2021/05/25: Validate HTTP and HTTPS separately
+                   2022/08/16: Get proxy region information
+                   2023/09/14: Rewrite using aiohttp and asynchronous programming
 -------------------------------------------------
 """
-__author__ = 'JHao'
 
-from util.six import Empty
-from threading import Thread
+import asyncio
+import aiohttp
+import random
+
 from datetime import datetime
 from util.webRequest import WebRequest
 from handler.logHandler import LogHandler
 from helper.validator import ProxyValidator
 from handler.proxyHandler import ProxyHandler
 from handler.configHandler import ConfigHandler
+from aiohttp_socks import ProxyConnector
+from helper.geoip import get_geo_info
+from loguru import logger
+
+
+def is_valid_ipv4(ip_str):
+    parts = ip_str.split(".")
+
+    # IPv4 地址应该有 4 个部分
+    if len(parts) != 4:
+        return False
+
+    for part in parts:
+        # 每个部分应该是数字，且范围在 0 到 255 之间
+        if not part.isdigit() or not 0 <= int(part) <= 255:
+            return False
+
+        # 防止 '01' 这种非法的情况
+        if part != str(int(part)):
+            return False
+
+    return True
+
+
+async def get_outbound_ip(proxy_str):
+    headers = {
+        "User-Agent": "curl/7.88.1"
+    }
+    urls = [
+        "http://ipv4.ip.sb",
+        "http://ip.ping0.cc",
+        "http://ipv4.icanhazip.com",
+        "http://ipv4.ifconfig.me",
+    ]
+
+    proxy, connector = None, None
+    if proxy_str.startswith("http"):
+        proxy = proxy_str
+    elif proxy_str.startswith("socks"):
+        connector = ProxyConnector.from_url(proxy_str)
+
+    url = random.choice(urls)
+    timeout = aiohttp.ClientTimeout(total=5)
+
+    try:
+        async with aiohttp.ClientSession(
+                timeout=timeout,
+                connector=connector
+        ) as session, session.get(url, headers=headers, proxy=proxy, ssl=False) as resp:
+            ip = await resp.text()
+            ip = ip.strip()
+            logger.info(f'proxy: {proxy_str} use {url} get outbound_ip: {ip}')
+            if is_valid_ipv4(ip):
+                return ip
+    except Exception as e:
+        logger.error(f'proxy: {proxy_str} use {url} get ip error: {e}')
+
+    return ''
 
 
 class DoValidator(object):
-    """ 执行校验 """
+    """Perform validation"""
 
     conf = ConfigHandler()
 
     @classmethod
-    def validator(cls, proxy, work_type):
+    async def validator(cls, proxy, work_type):
         """
-        校验入口
+        Validation entry point
         Args:
             proxy: Proxy Object
             work_type: raw/use
         Returns:
             Proxy Object
         """
-        http_r = cls.httpValidator(proxy)
-        https_r = False if not http_r else cls.httpsValidator(proxy)
+        status = None
 
+        https_support = False
+        if proxy.proxy.startswith('http'):
+            status = await cls.httpValidator(proxy)
+            if status:
+                https_support = await cls.httpsValidator(proxy)
+
+        elif proxy.proxy.startswith('socks'):
+            status = await cls.socksValidator(proxy)
+
+        proxy.https = https_support
         proxy.check_count += 1
         proxy.last_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        proxy.last_status = True if http_r else False
-        if http_r:
+        proxy.last_status = True if status else False
+        proxy.region = get_geo_info(proxy.ip)
+
+        if status:
             if proxy.fail_count > 0:
                 proxy.fail_count -= 1
-            proxy.https = True if https_r else False
+
             if work_type == "raw":
-                proxy.region = cls.regionGetter(proxy) if cls.conf.proxyRegion else ""
+                outbound_ip = await get_outbound_ip(proxy.proxy)
+                proxy.outbound_ip = outbound_ip
+                if outbound_ip and proxy.ip != outbound_ip:
+                    proxy.region = get_geo_info(outbound_ip)
         else:
             proxy.fail_count += 1
         return proxy
 
     @classmethod
-    def httpValidator(cls, proxy):
+    async def httpValidator(cls, proxy):
         for func in ProxyValidator.http_validator:
-            if not func(proxy.proxy):
+            result = await func(proxy.proxy)
+            if not result:
                 return False
         return True
 
     @classmethod
-    def httpsValidator(cls, proxy):
+    async def httpsValidator(cls, proxy):
         for func in ProxyValidator.https_validator:
-            if not func(proxy.proxy):
+            result = await func(proxy.proxy)
+            if not result:
                 return False
         return True
 
     @classmethod
-    def socksValidator(cls, proxy):
+    async def socksValidator(cls, proxy):
         for func in ProxyValidator.socks_validator:
-            if not func(proxy.proxy):
+            result = await func(proxy.proxy)
+            if not result:
                 return False
         return True
 
     @classmethod
-    def preValidator(cls, proxy):
+    async def preValidator(cls, proxy):
         for func in ProxyValidator.pre_validator:
-            if not func(proxy):
+            result = await func(proxy)
+            if not result:
                 return False
         return True
 
     @classmethod
-    def regionGetter(cls, proxy):
+    async def regionGetter(cls, proxy):
         try:
             url = 'https://searchplugin.csdn.net/api/v1/ip/get?ip=%s' % proxy.proxy.split(':')[0]
-            r = WebRequest().get(url=url, retry_time=1, timeout=2).json
-            return r['data']['address']
+            response = await WebRequest().get(url=url, retry_time=1, timeout=2)
+            data = await response.json()
+            return data['data']['address']
         except:
             return 'error'
 
 
-class _ThreadChecker(Thread):
-    """ 多线程检测 """
+async def checker_worker(work_type, target_queue, name):
+    log = LogHandler("checker")
+    proxy_handler = ProxyHandler()
+    conf = ConfigHandler()
+    log.info(f"{work_type.title()}ProxyCheck - {name}: start")
+    while True:
+        try:
+            proxy = target_queue.get_nowait()
+        except asyncio.QueueEmpty:
+            log.info(f"{work_type.title()}ProxyCheck - {name}: complete")
+            break
 
-    def __init__(self, work_type, target_queue, thread_name):
-        Thread.__init__(self, name=thread_name)
-        self.work_type = work_type
-        self.log = LogHandler("checker")
-        self.proxy_handler = ProxyHandler()
-        self.target_queue = target_queue
-        self.conf = ConfigHandler()
-
-    def run(self):
-        self.log.info("{}ProxyCheck - {}: start".format(self.work_type.title(), self.name))
-        while True:
-            try:
-                proxy = self.target_queue.get(block=False)
-            except Empty:
-                self.log.info("{}ProxyCheck - {}: complete".format(self.work_type.title(), self.name))
-                break
-            proxy = DoValidator.validator(proxy, self.work_type)
-            if self.work_type == "raw":
-                self.__ifRaw(proxy)
+        proxy = await DoValidator.validator(proxy, work_type)
+        if work_type == "raw":
+            if await proxy_handler.exists(proxy):
+                log.info(f'RawProxyCheck - {name}: {proxy.proxy.ljust(30)} exist')
             else:
-                self.__ifUse(proxy)
-            self.target_queue.task_done()
-
-    def __ifRaw(self, proxy):
-        if proxy.last_status:
-            if self.proxy_handler.exists(proxy):
-                self.log.info('RawProxyCheck - {}: {} exist'.format(self.name, proxy.proxy.ljust(30)))
-            else:
-                self.log.info('RawProxyCheck - {}: {} pass'.format(self.name, proxy.proxy.ljust(30)))
-                self.proxy_handler.put(proxy)
+                log.info(f'RawProxyCheck - {name}: {proxy.proxy.ljust(30)} pass')
+                await proxy_handler.put(proxy)
         else:
-            self.log.info('RawProxyCheck - {}: {} fail'.format(self.name, proxy.proxy.ljust(30)))
-
-    def __ifUse(self, proxy):
-        if proxy.last_status:
-            self.log.info('UseProxyCheck - {}: {} pass'.format(self.name, proxy.proxy.ljust(30)))
-            self.proxy_handler.put(proxy)
-        else:
-            if proxy.fail_count > self.conf.maxFailCount:
-                self.log.info('UseProxyCheck - {}: {} fail, count {} delete'.format(self.name,
-                                                                                    proxy.proxy.ljust(30),
-                                                                                    proxy.fail_count))
-                self.proxy_handler.delete(proxy)
+            if proxy.last_status:
+                log.info(f'UseProxyCheck - {name}: {proxy.proxy.ljust(30)} pass')
+                await proxy_handler.put(proxy)
             else:
-                self.log.info('UseProxyCheck - {}: {} fail, count {} keep'.format(self.name,
-                                                                                  proxy.proxy.ljust(30),
-                                                                                  proxy.fail_count))
-                self.proxy_handler.put(proxy)
+                if proxy.fail_count > conf.maxFailCount:
+                    log.info(f'UseProxyCheck - {name}: {proxy.proxy.ljust(30)} fail, count {proxy.fail_count} delete')
+                    await proxy_handler.delete(proxy)
+                else:
+                    log.info(f'UseProxyCheck - {name}: {proxy.proxy.ljust(30)} fail, count {proxy.fail_count} keep')
+                    await proxy_handler.put(proxy)
+        target_queue.task_done()
 
 
-def Checker(tp, queue):
+async def Checker(tp, queue):
     """
-    run Proxy ThreadChecker
-    :param tp: raw/use
-    :param queue: Proxy Queue
-    :return:
+    Run Proxy Checker
+    Args:
+        tp: raw/use
+        queue: asyncio.Queue
     """
-    thread_list = list()
+    tasks = []
     for index in range(20):
-        thread_list.append(_ThreadChecker(tp, queue, "thread_%s" % str(index).zfill(2)))
-
-    for thread in thread_list:
-        thread.setDaemon(True)
-        thread.start()
-
-    for thread in thread_list:
-        thread.join()
+        task = asyncio.create_task(checker_worker(tp, queue, f"worker_{str(index).zfill(2)}"))
+        tasks.append(task)
+    await asyncio.gather(*tasks)

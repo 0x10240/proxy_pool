@@ -12,12 +12,17 @@
 """
 __author__ = 'JHao'
 
+import os
+import sys
 import click
+
+sys.path.append(os.path.abspath(os.path.dirname(__file__)))
+
+
 from helper.launcher import startServer, startScheduler
 from setting import BANNER, VERSION
 
 CONTEXT_SETTINGS = dict(help_option_names=['-h', '--help'])
-
 
 @click.group(context_settings=CONTEXT_SETTINGS)
 @click.version_option(version=VERSION)

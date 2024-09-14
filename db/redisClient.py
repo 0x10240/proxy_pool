@@ -2,154 +2,194 @@
 """
 -----------------------------------------------------
    File Name：     redisClient.py
-   Description :   封装Redis相关操作
+   Description :   Encapsulate Redis operations (asynchronous)
    Author :        JHao
-   date：          2019/8/9
+   Date：          2019/8/9
 ------------------------------------------------------
    Change Activity:
-                   2019/08/09: 封装Redis相关操作
-                   2020/06/23: 优化pop方法, 改用hscan命令
-                   2021/05/26: 区别http/https代理
+                   2019/08/09: Encapsulate Redis operations
+                   2020/06/23: Optimize pop method, use hscan command
+                   2021/05/26: Distinguish between http/https proxies
+                   2023/09/14: Adapted to use asynchronous Redis client
 ------------------------------------------------------
 """
 __author__ = 'JHao'
 
-from redis.exceptions import TimeoutError, ConnectionError, ResponseError
-from redis.connection import BlockingConnectionPool
-from handler.logHandler import LogHandler
-from random import choice
-from redis import Redis
 import json
+import redis
+
+from random import choice
+from loguru import logger
+
+from redis.exceptions import TimeoutError, ConnectionError, ResponseError
+from redis.asyncio import Redis
+from redis.asyncio.connection import BlockingConnectionPool
+from handler.logHandler import LogHandler
 
 
 class RedisClient(object):
     """
-    Redis client
+    Asynchronous Redis client
 
-    Redis中代理存放的结构为hash：
-    key为ip:port, value为代理属性的字典;
-
+    Proxies are stored in a Redis hash:
+    Key is ip:port, value is a JSON string of proxy attributes
     """
 
     def __init__(self, **kwargs):
         """
-        init
-        :param host: host
-        :param port: port
-        :param password: password
-        :param db: db
-        :return:
+        Initialize the Redis client
+        :param kwargs: connection parameters (host, port, password, db, etc.)
         """
         self.name = ""
-        kwargs.pop("username")
-        self.__conn = Redis(connection_pool=BlockingConnectionPool(decode_responses=True,
-                                                                   timeout=5,
-                                                                   socket_timeout=5,
-                                                                   **kwargs))
+        kwargs.pop("username", None)  # Remove username if present
 
-    def get(self, https):
+        # Remove 'password' key if the value is None or empty string
+        # if 'password' in kwargs and not kwargs['password']:
+        #     kwargs.pop('password')
+
+        self.__conn = Redis(
+            connection_pool=BlockingConnectionPool(
+                decode_responses=True,
+                timeout=5,
+                socket_timeout=5,
+                **kwargs
+            )
+        )
+
+    async def get(self, https):
         """
-        返回一个代理
+        Return a proxy
+        :param https: whether to return an HTTPS proxy
+        :return: proxy JSON string or None
+        """
+        try:
+            if https:
+                items = await self.__conn.hvals(self.name)
+                proxies = list(filter(lambda x: json.loads(x).get("https"), items))
+                return choice(proxies) if proxies else None
+            else:
+                proxies = await self.__conn.hkeys(self.name)
+                proxy = choice(proxies) if proxies else None
+                return await self.__conn.hget(self.name, proxy) if proxy else None
+        except Exception as e:
+            log = LogHandler('redis_client')
+            log.error(f"Error getting proxy: {e}", exc_info=True)
+            return None
+
+    async def put(self, proxy_obj):
+        """
+        Put a proxy into the hash
+        :param proxy_obj: Proxy object
         :return:
         """
-        if https:
-            items = self.__conn.hvals(self.name)
-            proxies = list(filter(lambda x: json.loads(x).get("https"), items))
-            return choice(proxies) if proxies else None
-        else:
-            proxies = self.__conn.hkeys(self.name)
-            proxy = choice(proxies) if proxies else None
-            return self.__conn.hget(self.name, proxy) if proxy else None
+        try:
+            data = await self.__conn.hset(self.name, proxy_obj.proxy, proxy_obj.to_json)
+            return data
+        except Exception as e:
+            logger.error(f"Error putting proxy: {e}", exc_info=True)
+            return None
 
-    def put(self, proxy_obj):
+    async def pop(self, https):
         """
-        将代理放入hash, 使用changeTable指定hash name
-        :param proxy_obj: Proxy obj
-        :return:
+        Pop a proxy
+        :param https: whether to pop an HTTPS proxy
+        :return: proxy JSON string or None
         """
-        data = self.__conn.hset(self.name, proxy_obj.proxy, proxy_obj.to_json)
-        return data
-
-    def pop(self, https):
-        """
-        弹出一个代理
-        :return: dict {proxy: value}
-        """
-        proxy = self.get(https)
+        proxy = await self.get(https)
         if proxy:
-            self.__conn.hdel(self.name, json.loads(proxy).get("proxy", ""))
+            await self.__conn.hdel(self.name, json.loads(proxy).get("proxy", ""))
         return proxy if proxy else None
 
-    def delete(self, proxy_str):
+    async def delete(self, proxy_str):
         """
-        移除指定代理, 使用changeTable指定hash name
-        :param proxy_str: proxy str
+        Remove a specific proxy
+        :param proxy_str: proxy string
         :return:
         """
-        return self.__conn.hdel(self.name, proxy_str)
+        return await self.__conn.hdel(self.name, proxy_str)
 
-    def exists(self, proxy_str):
+    async def exists(self, proxy_str):
         """
-        判断指定代理是否存在, 使用changeTable指定hash name
-        :param proxy_str: proxy str
-        :return:
+        Check if a specific proxy exists
+        :param proxy_str: proxy string
+        :return: True if exists, False otherwise
         """
-        return self.__conn.hexists(self.name, proxy_str)
+        try:
+            return await self.__conn.hexists(self.name, proxy_str)
+        except redis.ConnectionError as e:
+            logger.error(f"Redis connection error: {e}")
+            return False
 
-    def update(self, proxy_obj):
+    async def update(self, proxy_obj):
         """
-        更新 proxy 属性
-        :param proxy_obj:
+        Update proxy attributes
+        :param proxy_obj: Proxy object
         :return:
         """
-        return self.__conn.hset(self.name, proxy_obj.proxy, proxy_obj.to_json)
+        return await self.__conn.hset(self.name, proxy_obj.proxy, proxy_obj.to_json)
 
-    def getAll(self, https):
+    async def getAll(self, type=None):
         """
-        字典形式返回所有代理, 使用changeTable指定hash name
-        :return:
+        Return all proxies as a list of JSON strings
+        :param https: whether to return only HTTPS proxies
+        :return: list of proxies
         """
-        items = self.__conn.hvals(self.name)
-        if https:
-            return list(filter(lambda x: json.loads(x).get("https"), items))
-        else:
-            return items
+        items = await self.__conn.hvals(self.name)
+        if type:
+            return list(filter(lambda x: json.loads(x).get("type") == type, items))
+        return items
 
-    def clear(self):
+    async def clear(self):
         """
-        清空所有代理, 使用changeTable指定hash name
+        Clear all proxies
         :return:
         """
-        return self.__conn.delete(self.name)
+        return await self.__conn.delete(self.name)
 
-    def getCount(self):
+    async def getCount(self):
         """
-        返回代理数量
-        :return:
+        Return the count of proxies
+        :return: dict with total and https counts
         """
-        proxies = self.getAll(https=False)
-        return {'total': len(proxies), 'https': len(list(filter(lambda x: json.loads(x).get("https"), proxies)))}
+        proxies = await self.getAll(https=False)
+        return {
+            'total': len(proxies),
+            'https': len(list(filter(lambda x: json.loads(x).get("https"), proxies)))
+        }
 
     def changeTable(self, name):
         """
-        切换操作对象
-        :param name:
+        Change the Redis hash name (table)
+        :param name: new hash name
         :return:
         """
         self.name = name
 
-    def test(self):
+    async def test(self):
+        """
+        Test the Redis connection
+        :return: Exception if failed, False if successful
+        """
         log = LogHandler('redis_client')
         try:
-            self.getCount()
+            return await self.getCount()
         except TimeoutError as e:
-            log.error('redis connection time out: %s' % str(e), exc_info=True)
+            log.error(f'Redis connection timeout: {e}', exc_info=True)
             return e
         except ConnectionError as e:
-            log.error('redis connection error: %s' % str(e), exc_info=True)
+            log.error(f'Redis connection error: {e}', exc_info=True)
             return e
         except ResponseError as e:
-            log.error('redis connection error: %s' % str(e), exc_info=True)
+            log.error(f'Redis response error: {e}', exc_info=True)
+            return e
+        except Exception as e:
+            log.error(f'Unexpected error: {e}', exc_info=True)
             return e
 
 
+if __name__ == '__main__':
+    import asyncio
+
+    kwargs = {'db': '0', 'host': '192.168.50.88', 'password': '', 'port': 6379, 'username': ''}
+    res = asyncio.run(RedisClient(**kwargs).test())
+    print(res)

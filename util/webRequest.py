@@ -1,40 +1,20 @@
-# -*- coding: utf-8 -*-
-"""
--------------------------------------------------
-   File Name：     WebRequest
-   Description :   Network Requests Class
-   Author :        J_hao
-   date：          2017/7/31
--------------------------------------------------
-   Change Activity:
-                   2017/7/31:
--------------------------------------------------
-"""
-__author__ = 'J_hao'
-
-from requests.models import Response
-from lxml import etree
-import requests
+import aiohttp
+import asyncio
 import random
-import time
-
 from handler.logHandler import LogHandler
 
-requests.packages.urllib3.disable_warnings()
 
-
-class WebRequest(object):
+class WebRequest:
     name = "web_request"
 
     def __init__(self, *args, **kwargs):
         self.log = LogHandler(self.name, file=False)
-        self.response = Response()
+        self.response = None
 
     @property
     def user_agent(self):
         """
-        return an User-Agent at random
-        :return:
+        Return a random User-Agent
         """
         ua_list = [
             'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/30.0.1599.101',
@@ -49,56 +29,36 @@ class WebRequest(object):
         return random.choice(ua_list)
 
     @property
-    def header(self):
+    def headers(self):
         """
-        basic header
-        :return:
+        Basic headers
         """
-        return {'User-Agent': self.user_agent,
-                'Accept': '*/*',
-                'Connection': 'keep-alive',
-                'Accept-Language': 'zh-CN,zh;q=0.8'}
+        return {
+            'User-Agent': self.user_agent,
+            'Accept': '*/*',
+            'Connection': 'keep-alive',
+            'Accept-Language': 'zh-CN,zh;q=0.8'
+        }
 
-    def get(self, url, header=None, retry_time=3, retry_interval=5, timeout=5, *args, **kwargs):
-        """
-        get method
-        :param url: target url
-        :param header: headers
-        :param retry_time: retry time
-        :param retry_interval: retry interval
-        :param timeout: network timeout
-        :return:
-        """
-        headers = self.header
-        if header and isinstance(header, dict):
-            headers.update(header)
-        while True:
+    async def get(self, url, headers=None, retry_time=3, retry_interval=5, timeout=5, *args, **kwargs):
+        merged_headers = self.headers.copy()
+        if headers and isinstance(headers, dict):
+            merged_headers.update(headers)
+
+        while retry_time > 0:
             try:
-                self.response = requests.get(url, headers=headers, timeout=timeout, *args, **kwargs)
-                return self
+                async with aiohttp.ClientSession(headers=merged_headers) as session:
+                    async with session.get(url, timeout=timeout, *args, **kwargs) as response:
+                        status = response.status
+                        content = await response.text()
+                        return status, content
             except Exception as e:
-                self.log.error("requests: %s error: %s" % (url, str(e)))
+                self.log.error(f"Request to {url} failed: {e}")
                 retry_time -= 1
                 if retry_time <= 0:
-                    resp = Response()
-                    resp.status_code = 200
-                    return self
-                self.log.info("retry %s second after" % retry_interval)
-                time.sleep(retry_interval)
+                    return None, None
 
-    @property
-    def tree(self):
-        return etree.HTML(self.response.content)
+                self.log.info(f"Retrying in {retry_interval} seconds...")
+                await asyncio.sleep(retry_interval)
 
-    @property
-    def text(self):
-        return self.response.text
-
-    @property
-    def json(self):
-        try:
-            return self.response.json()
-        except Exception as e:
-            self.log.error(str(e))
-            return {}
-
+        return None, None
