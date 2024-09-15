@@ -152,13 +152,21 @@ FETCHER_COMMON_SOURCE = [
         'url': 'https://raw.githubusercontent.com/mmpx12/proxy-list/master/socks5.txt',
         'type': 'socks5',
         'source': 'mmpx12/proxy-list'
+    },
+    {
+        'url': 'https://plainproxies.com/resources/download-proxies?country=all&protocol=http&ssl=all&anonymity=all&timeout=10000',
+        'type': 'http',
+        'source': 'plainproxies.com'
     }
 ]
 
 # ###### config the proxy fetch function ######
 PROXY_FETCHER = [
     "common",
-    "freeProxy11"
+    "geonode",
+    "free_proxy_list_net",
+    "advanced_name",
+    "docip"
 ]
 
 # ############# proxy validator #################

@@ -14,18 +14,27 @@ city_data = geoip2.database.Reader(os.path.join(database_dir, "GeoLite2-City.mmd
 ans_data = geoip2.database.Reader(os.path.join(database_dir, "GeoLite2-ASN.mmdb"))
 
 
-async def parse_location(host="127.0.0.1", port=7890):
+async def parse_location(proxy_str):
+    logger.info("Starting parse location.")
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/105.0.0.0 Safari/537.36"
+    }
+    url = "https://api.ip.sb/geoip"
+
+    proxy, connector = None, None
+    if proxy_str.startswith("http"):
+        proxy = proxy_str
+    elif proxy_str.startswith("socks"):
+        connector = ProxyConnector.from_url(proxy_str)
+
+    timeout = aiohttp.ClientTimeout(total=5)
+
     try:
-        logger.info("Starting parse location.")
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/105.0.0.0 Safari/537.36"
-        }
-        url = "https://api.ip.sb/geoip"
         async with aiohttp.ClientSession(
+                timeout=timeout,
+                connector=connector,
                 headers=headers,
-                connector=ProxyConnector(host=host, port=port),
-                timeout=aiohttp.ClientTimeout(connect=10, sock_connect=10, sock_read=10),
-        ) as session, session.get(url=url) as response:
+        ) as session, session.get(url, proxy=proxy, ssl=False) as response:
             tmp = await response.json()
             logger.info(
                 f'IP: {tmp["ip"]}, '
@@ -33,16 +42,11 @@ async def parse_location(host="127.0.0.1", port=7890):
                 f'Continent Code : {tmp["continent_code"]}, '
                 f'ISP : {tmp["organization"]}'
             )
-            return (
-                True,
-                tmp["country_code"],
-                tmp["continent_code"],
-                tmp["organization"],
-            )
+            return True, tmp["country_code"], tmp["continent_code"], tmp["organization"]
     except asyncio.TimeoutError:
         logger.error("Parse location timeout.")
     except Exception as e:
-        logger.exception(f"Parse location failed: {repr(e)}")
+        logger.error(f"Parse location failed: {repr(e)}")
     return False, "DEFAULT", "DEFAULT", "DEFAULT"
 
 
@@ -72,5 +76,10 @@ def get_geo_info(ip):
 
 
 if __name__ == '__main__':
-    res = get_geo_info('212.107.28.57')
-    print(res)
+    import requests
+
+    for _ in range(100):
+        proxy = requests.get('http://192.168.50.88:5010/get?type=http').json().get('proxy')
+        logger.info(f"proxy: {proxy}")
+        ret = asyncio.run(parse_location(proxy))
+        print(ret)

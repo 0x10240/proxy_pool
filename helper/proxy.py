@@ -31,21 +31,7 @@ class Proxy(object):
         self._last_status = last_status
         self._last_time = last_time
         self._https = https
-        self._outbound_ip = ""
-
-    @classmethod
-    def createFromJson(cls, proxy_json):
-        _dict = json.loads(proxy_json)
-        return cls(
-            proxy=_dict.get("proxy", ""),
-            fail_count=_dict.get("fail_count", 0),
-            anonymous=_dict.get("anonymous", ""),
-            source=_dict.get("source", ""),
-            check_count=_dict.get("check_count", 0),
-            last_status=_dict.get("last_status", ""),
-            last_time=_dict.get("last_time", ""),
-            https=_dict.get("https", False)
-        )
+        self.outbound_ip = ""
 
     @property
     def proxy(self):
@@ -93,11 +79,6 @@ class Proxy(object):
         return self._https
 
     @property
-    def outbound_ip(self):
-        """ 出口IP """
-        return self._outbound_ip
-
-    @property
     def to_dict(self):
         """ 属性字典 """
         return {
@@ -108,7 +89,7 @@ class Proxy(object):
             "port": self.port,
             "outbound_ip": self.outbound_ip,
             "fail_count": self.fail_count,
-            "region": self.region,
+            "region": self._region,
             "anonymous": self.anonymous,
             "source": self.source,
             "check_count": self.check_count,
@@ -148,10 +129,6 @@ class Proxy(object):
     @region.setter
     def region(self, value):
         self._region = value
-
-    @outbound_ip.setter
-    def outbound_ip(self, outbound_ip):
-        self._outbound_ip = outbound_ip
 
     def add_source(self, source_str):
         if source_str:

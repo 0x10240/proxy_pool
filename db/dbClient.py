@@ -86,8 +86,8 @@ class DbClient(withMetaclass(Singleton)):
                                    password=self.db_pwd,
                                    db=self.db_name)
 
-    async def get(self, https, **kwargs):
-        return await self.client.get(https, **kwargs)
+    async def get(self, type='', **kwargs):
+        return await self.client.get(type, **kwargs)
 
     async def put(self, key, **kwargs):
         return await self.client.put(key, **kwargs)
@@ -104,8 +104,8 @@ class DbClient(withMetaclass(Singleton)):
     async def pop(self, https, **kwargs):
         return await self.client.pop(https, **kwargs)
 
-    async def getAll(self, type=None):
-        return await self.client.getAll(type)
+    async def getAll(self):
+        return await self.client.getAll()
 
     async def clear(self):
         return await self.client.clear()

@@ -55,8 +55,10 @@ async def get_outbound_ip(proxy_str):
     urls = [
         "http://ipv4.ip.sb",
         "http://ip.ping0.cc",
-        "http://ipv4.icanhazip.com",
         "http://ipv4.ifconfig.me",
+        "http://ipv4.icanhazip.com",
+        "http://158.180.69.99:8080/",
+        "http://5.45.99.39:38080/"
     ]
 
     proxy, connector = None, None
@@ -120,11 +122,10 @@ class DoValidator(object):
             if proxy.fail_count > 0:
                 proxy.fail_count -= 1
 
-            if work_type == "raw":
-                outbound_ip = await get_outbound_ip(proxy.proxy)
-                proxy.outbound_ip = outbound_ip
-                if outbound_ip and proxy.ip != outbound_ip:
-                    proxy.region = get_geo_info(outbound_ip)
+            outbound_ip = await get_outbound_ip(proxy.proxy)
+            proxy.outbound_ip = outbound_ip
+            if outbound_ip and proxy.ip != outbound_ip:
+                proxy.region = get_geo_info(outbound_ip)
         else:
             proxy.fail_count += 1
         return proxy
@@ -173,36 +174,54 @@ class DoValidator(object):
 
 
 async def checker_worker(work_type, target_queue, name):
-    log = LogHandler("checker")
     proxy_handler = ProxyHandler()
     conf = ConfigHandler()
-    log.info(f"{work_type.title()}ProxyCheck - {name}: start")
+    log_prefix = f"{work_type.title()}ProxyCheck - {name}"
+    logger.info(f"{log_prefix}: start")
+
     while True:
         try:
             proxy = target_queue.get_nowait()
         except asyncio.QueueEmpty:
-            log.info(f"{work_type.title()}ProxyCheck - {name}: complete")
+            logger.info(f"{log_prefix}: complete")
             break
 
-        proxy = await DoValidator.validator(proxy, work_type)
-        if work_type == "raw":
-            if await proxy_handler.exists(proxy):
-                log.info(f'RawProxyCheck - {name}: {proxy.proxy.ljust(30)} exist')
+        try:
+            # 校验代理
+            proxy = await DoValidator.validator(proxy, work_type)
+
+            if work_type == "raw":
+                await handle_raw_proxy(proxy, proxy_handler, log_prefix)
             else:
-                log.info(f'RawProxyCheck - {name}: {proxy.proxy.ljust(30)} pass')
-                await proxy_handler.put(proxy)
-        else:
-            if proxy.last_status:
-                log.info(f'UseProxyCheck - {name}: {proxy.proxy.ljust(30)} pass')
-                await proxy_handler.put(proxy)
-            else:
-                if proxy.fail_count > conf.maxFailCount:
-                    log.info(f'UseProxyCheck - {name}: {proxy.proxy.ljust(30)} fail, count {proxy.fail_count} delete')
-                    await proxy_handler.delete(proxy)
-                else:
-                    log.info(f'UseProxyCheck - {name}: {proxy.proxy.ljust(30)} fail, count {proxy.fail_count} keep')
-                    await proxy_handler.put(proxy)
-        target_queue.task_done()
+                await handle_use_proxy(proxy, proxy_handler, conf, log_prefix)
+
+        except Exception as e:
+            logger.error(f"{log_prefix}: Error processing proxy {proxy.proxy}: {e}")
+
+        finally:
+            target_queue.task_done()
+
+
+async def handle_raw_proxy(proxy, proxy_handler, log_prefix):
+    if await proxy_handler.exists(proxy):
+        logger.info(f'{log_prefix}: {proxy.proxy.ljust(30)} exist')
+    else:
+        logger.info(f'{log_prefix}: {proxy.proxy.ljust(30)} pass')
+    await proxy_handler.put(proxy)
+
+
+async def handle_use_proxy(proxy, proxy_handler, conf, log_prefix):
+    if proxy.last_status:
+        logger.info(f'{log_prefix}: {proxy.proxy.ljust(30)} pass')
+        await proxy_handler.put(proxy)
+        return
+
+    if proxy.fail_count > conf.maxFailCount:
+        logger.info(f'{log_prefix}: {proxy.proxy.ljust(30)} fail, count {proxy.fail_count} delete')
+        await proxy_handler.delete(proxy)
+    else:
+        logger.info(f'{log_prefix}: {proxy.proxy.ljust(30)} fail, count {proxy.fail_count} keep')
+        await proxy_handler.put(proxy)
 
 
 async def Checker(tp, queue):

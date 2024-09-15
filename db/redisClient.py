@@ -56,21 +56,20 @@ class RedisClient(object):
             )
         )
 
-    async def get(self, https):
+    async def get(self, type=''):
         """
         Return a proxy
         :param https: whether to return an HTTPS proxy
         :return: proxy JSON string or None
         """
         try:
-            if https:
-                items = await self.__conn.hvals(self.name)
-                proxies = list(filter(lambda x: json.loads(x).get("https"), items))
-                return choice(proxies) if proxies else None
-            else:
-                proxies = await self.__conn.hkeys(self.name)
-                proxy = choice(proxies) if proxies else None
-                return await self.__conn.hget(self.name, proxy) if proxy else None
+            items = [json.loads(x) for x in await self.__conn.hvals(self.name)]
+            items = [x for x in items if x.get("last_status") and x.get("outbound_ip")]
+
+            if type:
+                items = list(filter(lambda x: x.get("type") == type, items))
+
+            return choice(items) if items else None
         except Exception as e:
             log = LogHandler('redis_client')
             log.error(f"Error getting proxy: {e}", exc_info=True)
@@ -128,16 +127,14 @@ class RedisClient(object):
         """
         return await self.__conn.hset(self.name, proxy_obj.proxy, proxy_obj.to_json)
 
-    async def getAll(self, type=None):
+    async def getAll(self):
         """
         Return all proxies as a list of JSON strings
         :param https: whether to return only HTTPS proxies
         :return: list of proxies
         """
         items = await self.__conn.hvals(self.name)
-        if type:
-            return list(filter(lambda x: json.loads(x).get("type") == type, items))
-        return items
+        return [json.loads(item) for item in items]
 
     async def clear(self):
         """
@@ -151,7 +148,7 @@ class RedisClient(object):
         Return the count of proxies
         :return: dict with total and https counts
         """
-        proxies = await self.getAll(https=False)
+        proxies = await self.getAll()
         return {
             'total': len(proxies),
             'https': len(list(filter(lambda x: json.loads(x).get("https"), proxies)))

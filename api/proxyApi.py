@@ -12,6 +12,7 @@
 """
 __author__ = 'JHao'
 
+import json
 import platform
 from typing import List, Dict, Any, Optional
 
@@ -55,12 +56,9 @@ async def index():
 
 @app.get("/get/")
 async def get_proxy(type: Optional[str] = Query(default="", description="Type of proxy: 'https' or ''")):
-    https = type.lower() == 'https'
-    proxy = await proxy_handler.get(https)
-    if proxy:
-        return proxy.to_dict
-    else:
-        return {"code": 0, "src": "no proxy"}
+    type = type.lower()
+    proxy = await proxy_handler.get(type)
+    return proxy if proxy else {"code": 0, "src": "no proxy"}
 
 
 @app.get("/pop/")
@@ -83,14 +81,25 @@ async def refresh():
 async def get_all(
         type: Optional[str] = Query(default="", description="Type of proxy: 'https' or ''"),
         source: Optional[str] = Query(default="", description="source of proxy"),
-        last_status: Optional[bool] = Query(default=False, description="last status of proxy"),
+        valid: Optional[bool] = Query(default=False, description="is proxy valid"),
+        count: Optional[int] = Query(default=0, description="count of proxy"),
 ):
-    proxies = await proxy_handler.getAll(type)
+    proxies = await proxy_handler.getAll()
+    # proxies.sort(key=lambda x: x.get('last_time', ''), reverse=True)
+
+    if type:
+        proxies = [proxy for proxy in proxies if source in proxy.get("type") == type]
+
     if source:
-        proxies = [proxy for proxy in proxies if proxy.source == source]
-    if last_status:
-        proxies = [proxy for proxy in proxies if proxy.last_status == last_status]
-    return [proxy.to_dict for proxy in proxies]
+        proxies = [proxy for proxy in proxies if source in proxy.get("source")]
+
+    if valid:
+        proxies = [proxy for proxy in proxies if proxy.get("last_status") and proxy.get("outbound_ip")]
+
+    if count > 0:
+        proxies = proxies[:count]
+
+    return proxies
 
 
 @app.get("/delete/")

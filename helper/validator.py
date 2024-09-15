@@ -13,6 +13,7 @@
 """
 
 import re
+
 import aiohttp
 import asyncio
 
@@ -114,9 +115,26 @@ async def customValidatorExample(proxy):
     return True
 
 
+async def test():
+    import requests
+
+    data = requests.get("http://192.168.50.88:5010//all/?valid=true&type=socks5").json()
+    proxies = [x.get('proxy') for x in data]
+    tasks = []
+
+    async with aiohttp.ClientSession() as session:
+        for proxy in proxies:
+            p = ProxyValidator()
+            for func in p.socks_validator:
+                task = asyncio.create_task(func(proxy))  # 使用 create_task 提交任务
+                tasks.append(task)
+
+    res = await asyncio.gather(*tasks)
+    for i in range(len(proxies)):
+        proxy = proxies[i]
+        resi = res[i]
+        print(proxy, resi)
+
+
 if __name__ == '__main__':
-    p = ProxyValidator()
-    for func in p.socks_validator:
-        proxy = 'socks5://192.168.50.88:30001'
-        res = asyncio.run(func(proxy))
-        print(res)
+    asyncio.run(test())
