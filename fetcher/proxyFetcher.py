@@ -74,7 +74,7 @@ class ProxyFetcher(object):
         lock = asyncio.Lock()  # 创建锁
 
         async def fetch_page_data(page):
-            url = f"https://proxylist.geonode.com/api/proxy-list?limit=500&page={page}&sort_by=lastChecked&sort_type=desc"
+            url = f"https://proxylist.geonode.com/api/proxy-list?protocols=socks5&limit=500&page={page}&sort_by=lastChecked&sort_type=desc"
             async with semaphore:  # 信号量限制
                 try:
                     status, text = await WebRequest().get(url=url)
@@ -83,8 +83,10 @@ class ProxyFetcher(object):
 
                         async with lock:
                             for item in data:
+                                if item.get('ip') == '127.0.0.1':
+                                    continue
                                 results[item.get('_id', '')] = {
-                                    'type': item.get('protocols')[0],
+                                    'type': 'socks5',
                                     'ip': item.get('ip'),
                                     'port': item.get('port'),
                                     'source': 'geonode'
@@ -92,7 +94,7 @@ class ProxyFetcher(object):
                 except Exception as e:
                     logger.error(f'geonode page: {page} url: {url}, error: {e}')
 
-        tasks = [fetch_page_data(page) for page in range(1, 11)]
+        tasks = [fetch_page_data(page) for page in range(1, 4)]
         await asyncio.gather(*tasks)
 
         values = results.values()
@@ -134,17 +136,15 @@ class ProxyFetcher(object):
                         async with lock:
                             for tr in trs:
                                 try:
+                                    if 'socks5' not in tr.lower():
+                                        continue
+
                                     ip_b64 = re.search('<td data-ip="(.*?)"></td>', tr).group(1)
                                     port_b64 = re.search('<td data-port="(.*?)"></td>', tr).group(1)
-
                                     ip = base64.b64decode(ip_b64).decode('utf-8')
                                     port = base64.b64decode(port_b64).decode('utf-8')
-                                    type = 'http'
-                                    if 'socks5' in tr.lower():
-                                        type = 'socks5'
-                                    elif 'socks4' in tr.lower():
-                                        type = 'socks4'
 
+                                    type = 'socks5'
                                     results[f'{ip}:{port}'] = {
                                         'type': type,
                                         'ip': ip,
@@ -164,32 +164,14 @@ class ProxyFetcher(object):
         for v in values:
             yield v
 
-    @staticmethod
-    async def docip():
-        url = "https://www.docip.net/data/free.json"
-        _, content = await WebRequest().get(url=url)
-        try:
-            data = json.loads(content)
-            for item in data['data']:
-                ip, port = item['ip'].split(':')
-                yield {
-                    'type': 'http',
-                    'ip': ip,
-                    'port': port,
-                    'source': 'docip.net'
-                }
-
-        except Exception as e:
-            print(e)
-
 
 if __name__ == '__main__':
     p = ProxyFetcher()
 
 
     async def run():
-        async for proxy_data in p.advanced_name():
-            print(proxy_data)
+        async for proxy_data in p.common():
+            pass
 
 
     asyncio.run(run())
