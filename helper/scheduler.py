@@ -62,7 +62,7 @@ async def main():
 
     # Add jobs to the scheduler
     scheduler.add_job(__runProxyFetch, 'interval', minutes=10, id="proxy_fetch", name="Proxy Fetch")
-    scheduler.add_job(__runProxyCheck, 'interval', minutes=3, id="proxy_check", name="Proxy Check")
+    scheduler.add_job(__runProxyCheck, 'interval', minutes=5, id="proxy_check", name="Proxy Check")
 
     # Start the scheduler
     scheduler.start()

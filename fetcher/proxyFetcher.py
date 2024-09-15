@@ -103,6 +103,24 @@ class ProxyFetcher(object):
             yield v
 
     @staticmethod
+    async def lumiproxy():
+        url = "https://api.lumiproxy.com/web_v1/free-proxy/list?page_size=1000&page=1&protocol=8&language=zh-hans"
+        try:
+            status, text = await WebRequest().get(url=url)
+            if status == 200 and text:
+                proxies = json.loads(text).get('data', {}).get('list', [])
+                logger.info(f'lumi proxies count: {len(proxies)}')
+                for proxy in proxies:
+                    yield {
+                        'source': 'lumiproxy',
+                        'type': 'socks5',
+                        'ip': proxy['ip'],
+                        'port': proxy['port']
+                    }
+        except Exception as e:
+            logger.error(f'geonode url: {url}, error: {e}')
+
+    @staticmethod
     async def free_proxy_list_net():
         url = f"https://free-proxy-list.net/#"
         try:
@@ -168,10 +186,9 @@ class ProxyFetcher(object):
 if __name__ == '__main__':
     p = ProxyFetcher()
 
-
     async def run():
-        async for proxy_data in p.common():
+        async for proxy_data in p.lumiproxy():
+            # print(proxy_data)
             pass
-
 
     asyncio.run(run())

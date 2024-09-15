@@ -70,6 +70,7 @@ PROXY_FETCHER = [
     "common",
     "geonode",
     "advanced_name",
+    "lumiproxy"
 ]
 
 # ############# proxy validator #################
