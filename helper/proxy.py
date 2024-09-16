@@ -15,6 +15,8 @@ __author__ = 'JHao'
 import json
 from loguru import logger
 
+from setting import source
+
 
 class Proxy(object):
 
@@ -26,12 +28,12 @@ class Proxy(object):
         self._fail_count = fail_count
         self._region = region
         self._anonymous = anonymous
-        self._source = source.split('/')
+        self._source = source.split(',')
         self._check_count = check_count
         self._last_status = last_status
         self._last_time = last_time
         self._https = https
-        self.outbound_ip = ""
+        self.outbound_ip = outbound_ip
 
     @classmethod
     def createFromJson(cls, data):
@@ -70,7 +72,7 @@ class Proxy(object):
     @property
     def source(self):
         """ 代理来源 """
-        return '/'.join(self._source)
+        return ','.join(self._source)
 
     @property
     def check_count(self):
@@ -151,6 +153,8 @@ class Proxy(object):
 
 
 if __name__ == '__main__':
-    p = Proxy('::')
+    p = Proxy('::', source='a')
     p.region = "1234"
+    p.add_source('b')
+    p.add_source('c')
     print(p.to_json)

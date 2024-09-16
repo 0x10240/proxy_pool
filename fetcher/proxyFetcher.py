@@ -187,8 +187,8 @@ if __name__ == '__main__':
     p = ProxyFetcher()
 
     async def run():
-        async for proxy_data in p.lumiproxy():
-            # print(proxy_data)
+        async for proxy_data in p.common():
+            print(proxy_data)
             pass
 
     asyncio.run(run())
