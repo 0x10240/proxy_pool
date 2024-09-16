@@ -232,7 +232,7 @@ async def Checker(tp, queue):
         queue: asyncio.Queue
     """
     tasks = []
-    for index in range(20):
+    for index in range(50):
         task = asyncio.create_task(checker_worker(tp, queue, f"worker_{str(index).zfill(2)}"))
         tasks.append(task)
     await asyncio.gather(*tasks)

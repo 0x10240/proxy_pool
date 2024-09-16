@@ -43,7 +43,9 @@ async def __runProxyCheck():
     count = await proxy_handler.db.getCount()
     if count.get("total", 0) < conf.poolSizeMin:
         await __runProxyFetch()
+
     proxies = await proxy_handler.getAll()
+    proxies.sort(key=lambda proxy: proxy.get("last_time"))
     proxies = [Proxy.createFromJson(proxy) for proxy in proxies]
     for proxy in proxies:
         await proxy_queue.put(proxy)
