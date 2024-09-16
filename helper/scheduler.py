@@ -22,7 +22,7 @@ from helper.check import Checker
 from handler.logHandler import LogHandler
 from handler.proxyHandler import ProxyHandler
 from handler.configHandler import ConfigHandler
-
+from helper.proxy import Proxy
 
 async def __runProxyFetch():
     proxy_queue = asyncio.Queue()
@@ -44,8 +44,10 @@ async def __runProxyCheck():
     if count.get("total", 0) < conf.poolSizeMin:
         await __runProxyFetch()
     proxies = await proxy_handler.getAll()
+    proxies = [Proxy.createFromJson(proxy) for proxy in proxies]
     for proxy in proxies:
         await proxy_queue.put(proxy)
+
     await Checker("use", proxy_queue)
 
 

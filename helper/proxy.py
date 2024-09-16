@@ -19,7 +19,7 @@ from loguru import logger
 class Proxy(object):
 
     def __init__(self, proxy, fail_count=0, region="", anonymous="",
-                 source="", check_count=0, last_status="", last_time="", https=False):
+                 source="", check_count=0, last_status="", last_time="", https=False, outbound_ip=''):
         self._proxy = proxy
         self.type, self.ip, self.port = proxy.split(":")
         self.ip = self.ip.replace("//", "")
@@ -32,6 +32,20 @@ class Proxy(object):
         self._last_time = last_time
         self._https = https
         self.outbound_ip = ""
+
+    @classmethod
+    def createFromJson(cls, data):
+        return cls(
+            proxy=data.get("proxy", ""),
+            fail_count=data.get("fail_count", 0),
+            anonymous=data.get("anonymous", ""),
+            source=data.get("source", ""),
+            check_count=data.get("check_count", 0),
+            last_status=data.get("last_status", ""),
+            last_time=data.get("last_time", ""),
+            https=data.get("https", False),
+            outbound_ip=data.get("outbound_ip", "")
+        )
 
     @property
     def proxy(self):

@@ -11,6 +11,7 @@ services:
     depends_on:
       - proxy_redis
     working_dir: /app
+    restart: always
     command: uvicorn api.proxyApi:app --host 0.0.0.0 --port 5010
 
   proxy_pool_scheduer:
@@ -24,6 +25,7 @@ services:
     depends_on:
       - proxy_redis
     working_dir: /app
+    restart: always
     command: python helper/scheduler.py
 
   proxy_redis:
@@ -33,3 +35,4 @@ services:
       - "6379:6379"
     volumes:
       - ./redis_data:/data
+    restart: always

@@ -1,22 +1,8 @@
 # -*- coding: utf-8 -*-
-"""
------------------------------------------------------
-   File Name：     redisClient.py
-   Description :   Encapsulate Redis operations (asynchronous)
-   Author :        JHao
-   Date：          2019/8/9
-------------------------------------------------------
-   Change Activity:
-                   2019/08/09: Encapsulate Redis operations
-                   2020/06/23: Optimize pop method, use hscan command
-                   2021/05/26: Distinguish between http/https proxies
-                   2023/09/14: Adapted to use asynchronous Redis client
-------------------------------------------------------
-"""
-__author__ = 'JHao'
 
 import json
 import redis
+import collections
 
 from random import choice
 from loguru import logger
@@ -149,9 +135,18 @@ class RedisClient(object):
         :return: dict with total and https counts
         """
         proxies = await self.getAll()
+        valid_count = 0
+        sources = collections.defaultdict(int)
+
+        for proxy in proxies:
+            if proxy.get("last_status") and proxy.get("outbound_ip"):
+                valid_count += 1
+            sources[proxy.get("source")] += 1
+
         return {
             'total': len(proxies),
-            'https': len(list(filter(lambda x: json.loads(x).get("https"), proxies)))
+            'valid': valid_count,
+            'sources': sources
         }
 
     def changeTable(self, name):
