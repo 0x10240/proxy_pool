@@ -27,6 +27,11 @@ services:
     working_dir: /app
     restart: always
     command: python helper/scheduler.py
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   proxy_redis:
     image: "redis"
